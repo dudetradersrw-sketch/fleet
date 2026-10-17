@@ -1,503 +1,465 @@
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyABP4xsGbLluzADJhotyT5e4SSnp_WYC2DlfpMC56PJx8MQaN-IcHk_bfbZAocVMsb_Q/exec";
-let globalData = {};
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Port Clearing & Logistics</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Port Clearing Operations</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
 
-// Robust JSONP fetch function that bypasses browser CORS locks completely
-async function fetchDatabase(forceRefresh = false) {
-  try {
-    const cachedData = sessionStorage.getItem("fleetDesk_db");
-    if (!forceRefresh && cachedData) {
-      console.log("Loading data from session cache...");
-      globalData = JSON.parse(cachedData);
-      
-      // Ensure Trips array always exists
-      if (!globalData.Trips) globalData.Trips = [];
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Clearing");
 
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      return;
-    }
+    window.onDataLoaded = function(db) {
+      db = db || {};
+      const clearingList = db.Clearing || [];
+      const columns = ["ID", "ContainerNo", "BLno", "Consignee", "Client", "Size", "Port", "Destination", "ETA", "Transporter", "Truck", "Clearing ($)", "Transport ($)", "Storage ($)", "Actions"];
 
-    console.log("Fetching fresh data via JSONP...");
-    await new Promise((resolve, reject) => {
-      const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
-      window[callbackName] = function(parsedData) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        
-        globalData = {};
-        Object.keys(parsedData).forEach(sheet => {
-          globalData[sheet] = Array.isArray(parsedData[sheet]) ? [...parsedData[sheet]].reverse() : [];
-        });
-        
-        // Ensure Trips array always exists even if sheet is empty/missing
-        if (!globalData.Trips) globalData.Trips = [];
+      let tableRows = "";
+      clearingList.forEach(item => {
+        const hasAttachment = item.AttachmentData && item.AttachmentData.length > 0;
+        tableRows += `
+          <tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="previewClearingDetails('${item.ID}')">
+            <td class="p-3 text-xs text-gray-500 font-mono">${item.ID || ''}</td>
+            <td class="p-3 font-bold text-gray-800">📦 ${item.ContainerNo || ''} ${hasAttachment ? '📎' : ''}</td>
+            <td class="p-3 text-xs text-blue-600">${item.BLno || ''}</td>
+            <td class="p-3 text-xs">${item.Consignee || ''}</td>
+            <td class="p-3 font-semibold text-indigo-700">${item.Client || ''}</td>
+            <td class="p-3 text-xs">${item.Size || ''}</td>
+            <td class="p-3 text-xs">${item.Port || ''}</td>
+            <td class="p-3 text-xs">${item.Destination || ''}</td>
+            <td class="p-3 text-xs">${item.ETA || ''}</td>
+            <td class="p-3 text-xs">${item.Transporter || ''}</td>
+            <td class="p-3 text-xs">${item.Truck || ''}</td>
+            <td class="p-3 font-semibold text-blue-600">$${parseFloat(item.ClearingAmount || 0).toFixed(2)}</td>
+            <td class="p-3 font-semibold text-emerald-600">$${parseFloat(item.TransportAmount || 0).toFixed(2)}</td>
+            <td class="p-3 font-semibold text-red-600">$${parseFloat(item.StorageAmount || 0).toFixed(2)}</td>
+            <td class="p-3 text-center" onclick="event.stopPropagation()">
+              ${renderActionCell('Clearing', item.ID)}
+            </td>
+          </tr>
+        `;
+      });
 
-        sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
-
-        if (typeof window.onDataLoaded === "function") {
-          window.onDataLoaded(globalData);
-        }
-        resolve();
-      };
-
-      const script = document.createElement('script');
-      script.src = `${SCRIPT_URL}?callback=${callbackName}&t=${Date.now()}`;
-      script.onerror = function(err) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        reject(err);
-      };
-      document.body.appendChild(script);
-    });
-
-  } catch (err) {
-    console.warn("JSONP fetch failed, falling back to local cache...", err);
-    const fallbackCache = sessionStorage.getItem("fleetDesk_db");
-    if (fallbackCache) {
-      globalData = JSON.parse(fallbackCache);
-      if (!globalData.Trips) globalData.Trips = [];
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      showNotification("Running on cached local data.", "error");
-    } else {
-      globalData = { Trucks: [], Drivers: [], Containers: [], Invoices: [], Expenses: [], Users: [], Garage: [], Monitoring: [], Trailers: [], Combinations: [], Contacts: [], Cashbook: [], CashAccounts: [], Trips: [] };
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      showNotification("Unable to connect to Google Sheets backend.", "error");
-    }
-  }
-}
-
-// Interactive Sync Button Handler with visual loading state
-async function triggerSyncWithLoading() {
-  const syncBtn = document.getElementById("sync_btn");
-  const syncIcon = document.getElementById("sync_icon");
-  const syncText = document.getElementById("sync_text");
-
-  // 1. Show visual loading state
-  if (syncBtn) syncBtn.disabled = true;
-  if (syncIcon) syncIcon.classList.add("animate-spin");
-  if (syncText) syncText.innerText = "Syncing...";
-
-  try {
-    // 2. Fetch fresh database data from Google Sheets bypassing session cache
-    await fetchDatabase(true);
-    showNotification("Data synced successfully!");
-  } catch (err) {
-    console.error("Sync failed:", err);
-    showNotification("Sync failed. Please check internet connection.", "error");
-  } finally {
-    // 3. Restore button state after fetch completes
-    if (syncBtn) syncBtn.disabled = false;
-    if (syncIcon) syncIcon.classList.remove("animate-spin");
-    if (syncText) syncText.innerText = "Sync";
-  }
-}
-
-async function sendToServer(sheetName, action, data) {
-  try {
-    if (!globalData[sheetName]) globalData[sheetName] = [];
-    
-    if (action === "add") {
-      data.ID = data.ID || "FD-" + Date.now().toString().slice(-4);
-      globalData[sheetName].unshift(data);
-    } else if (action === "update") {
-      const index = globalData[sheetName].findIndex(row => String(row.ID) === String(data.ID));
-      if (index !== -1) {
-        globalData[sheetName][index] = { ...globalData[sheetName][index], ...data };
-      }
-    } else if (action === "delete") {
-      globalData[sheetName] = globalData[sheetName].filter(row => String(row.ID) !== String(data.id));
-    } else if (action === "archive") {
-      const item = globalData[sheetName].find(row => String(row.ID) === String(data.id));
-      if (item) item.Status = "Archived";
-    }
-
-    sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
-
-    if (typeof window.onDataLoaded === "function") {
-      window.onDataLoaded(globalData);
-    }
-    
-    closeFormModal();
-    showNotification("Operation successful!");
-
-    await fetch(SCRIPT_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ sheet: sheetName, action: action, data: data })
-    });
-
-  } catch (err) {
-    console.error("Server error:", err);
-    showNotification("Saved locally (offline mode).", "error");
-  }
-}
-
-// Toggle Sidebar state and persist user preference in localStorage
-function toggleSidebar() {
-  const sidebar = document.getElementById("fleetSidebar");
-  const toggleIcon = document.getElementById("sidebarToggleIcon");
-  if (!sidebar) return;
-
-  const isCollapsed = sidebar.classList.toggle("w-16");
-  sidebar.classList.toggle("w-64");
-
-  // Toggle label visibility
-  document.querySelectorAll(".sidebar-label").forEach(el => {
-    el.classList.toggle("hidden", isCollapsed);
-  });
-
-  // Toggle brand title
-  const brandText = document.getElementById("brandText");
-  if (brandText) brandText.classList.toggle("hidden", isCollapsed);
-
-  // Toggle user badge labels
-  const userDetails = document.getElementById("sidebarUserDetails");
-  if (userDetails) userDetails.classList.toggle("hidden", isCollapsed);
-
-  // Update toggle arrow icon
-  if (toggleIcon) toggleIcon.innerText = isCollapsed ? "▶" : "◀";
-
-  localStorage.setItem("fleetDesk_sidebarCollapsed", isCollapsed ? "true" : "false");
-}
-
-function renderSidebar(activePage) {
-  const currentUser = JSON.parse(sessionStorage.getItem("fleetDesk_currentUser") || "{}");
-  const isAdmin = currentUser.Username === "admin" || currentUser.IsMasterAdmin;
-  const isCollapsed = localStorage.getItem("fleetDesk_sidebarCollapsed") === "true";
-
-  const allPages = [
-    { name: "Dashboard", file: "index.html", icon: "📊" },
-    { name: "Trucks", file: "trucks.html", icon: "🚛" },
-    { name: "Trailers", file: "trailers.html", icon: "🚃" },
-    { name: "Combinations", file: "combinations.html", icon: "🔗" },
-    { name: "Drivers", file: "drivers.html", icon: "👤" },
-    { name: "Garage", file: "garage.html", icon: "🔧" },
-    { name: "Trips", file: "trips.html", icon: "🚀" },
-    { name: "Monitoring & Alerts", file: "monitoring.html", icon: "⚠️" },
-    { name: "Containers", file: "containers.html", icon: "📦" },
-    { name: "Cashbook", file: "cashbook.html", icon: "💵" },
-    { name: "Invoices", file: "invoices.html", icon: "📄" },
-    { name: "Expenses", file: "expenses.html", icon: "📉" },
-    { name: "Contacts", file: "contacts.html", icon: "📇" }
-  ];
-
-  const pages = allPages.filter(p => isAdmin || hasPermission(p.name));
-
-  if (isAdmin) {
-    pages.push({ name: "Users", file: "users.html", icon: "🔐" });
-  }
-
-  return `
-    <aside id="fleetSidebar" class="${isCollapsed ? 'w-16' : 'w-64'} bg-slate-900 text-slate-300 flex flex-col justify-between hidden md:flex h-screen sticky top-0 transition-all duration-300 z-30">
-      <div>
-        <div class="p-4 text-xl font-bold text-white flex items-center justify-between border-b border-slate-800">
-          <div class="flex items-center gap-2 overflow-hidden">
-            <span>🚚</span> <span id="brandText" class="${isCollapsed ? 'hidden' : ''} whitespace-nowrap">FleetDesk</span>
-          </div>
-          <button onclick="toggleSidebar()" title="Toggle Sidebar" class="text-slate-400 hover:text-white bg-slate-800 p-1.5 rounded-lg text-xs transition">
-            <span id="sidebarToggleIcon">${isCollapsed ? '▶' : '◀'}</span>
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2 flex justify-between items-center">
+          <button onclick="openClearingFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add Port Clearing File
           </button>
         </div>
-        <nav class="mt-2 px-2 space-y-1 text-sm overflow-y-auto max-h-[calc(100vh-140px)]">
-          ${pages.map(p => `
-            <a href="${p.file}" title="${p.name}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-800 ${activePage === p.name ? 'bg-slate-800 text-white font-semibold' : ''}">
-              <span class="text-base">${p.icon}</span>
-              <span class="sidebar-label ${isCollapsed ? 'hidden' : ''} whitespace-nowrap">${p.name}</span>
-            </a>
-          `).join('')}
-        </nav>
-      </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search clearing files..." oninput="filterTable(event, 'table_Clearing')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Clearing', columns)}
+              <button onclick="exportPDFTable('Clearing', globalData.Clearing || [])" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Clearing', globalData.Clearing || [])" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Clearing">
+              <thead>
+                <tr class="bg-gray-50 text-gray-500 text-xs">
+                  <th class="p-3">ID</th>
+                  <th class="p-3">ContainerNo</th>
+                  <th class="p-3">BLno</th>
+                  <th class="p-3">Consignee</th>
+                  <th class="p-3">Client</th>
+                  <th class="p-3">Size</th>
+                  <th class="p-3">Port</th>
+                  <th class="p-3">Destination</th>
+                  <th class="p-3">ETA</th>
+                  <th class="p-3">Transporter</th>
+                  <th class="p-3">Truck</th>
+                  <th class="p-3">Clearing ($)</th>
+                  <th class="p-3">Transport ($)</th>
+                  <th class="p-3">Storage ($)</th>
+                  <th class="p-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${tableRows || '<tr><td colspan="15" class="p-4 text-center text-gray-400">No clearing files found. Click "Add Port Clearing File" to start.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    };
+
+    let attachedFileBase64 = "";
+    let attachedFileName = "";
+
+    function triggerFileInput() {
+      const fileInput = document.getElementById("hiddenClearingFileInput");
+      if (fileInput) fileInput.click();
+    }
+
+    function handleFileAttachment(event) {
+      const file = event.target.files[0];
+      if (!file) return;
       
-      <div class="p-3 border-t border-slate-800 flex items-center justify-between text-xs overflow-hidden">
-        <div id="sidebarUserDetails" class="${isCollapsed ? 'hidden' : ''} whitespace-nowrap">
-          <p class="font-bold text-white truncate max-w-[110px]">${currentUser.Name || currentUser.Username || 'User'}</p>
-          <p class="text-slate-400 truncate max-w-[110px]">${currentUser.Category || 'User'}</p>
+      attachedFileName = file.name;
+      const displaySpan = document.getElementById("attachedFileNameDisplay");
+      if (displaySpan) {
+        displaySpan.innerText = "Selected: " + attachedFileName;
+        displaySpan.className = "text-xs text-emerald-600 font-semibold truncate max-w-[220px]";
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(uploadEvent) {
+        attachedFileBase64 = uploadEvent.target.result;
+        showNotification("File attached successfully!");
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function openClearingFormModal(item = null) {
+      const db = globalData || {};
+      const contacts = db.Contacts || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+
+      const ports = ["Port of Dar es Salaam", "Port of Mombasa", "Kigali ICD (Magarum)", "Rusumo Dry Port"];
+      const destinations = ["Kigali, Rwanda", "Goma, DRC", "Bukavu, DRC", "Bujumbura, Burundi", "Kampala, Uganda"];
+
+      attachedFileBase64 = item ? (item.AttachmentData || "") : "";
+      attachedFileName = item ? (item.AttachmentName || "") : "";
+
+      const editId = item ? item.ID : '';
+      const html = `
+        <form onsubmit="submitClearingForm(event)" class="space-y-4 max-h-[75vh] overflow-y-auto px-1">
+          <input type="hidden" id="cl_edit_id" value="${editId}">
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Container No</label>
+              <input type="text" id="cl_container" value="${item ? item.ContainerNo || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">BL No</label>
+              <input type="text" id="cl_bl" value="${item ? item.BLno || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Size</label>
+              <select id="cl_size" class="border p-2 rounded w-full text-sm outline-none bg-white">
+                <option value="20ft" ${item && item.Size === '20ft' ? 'selected' : ''}>20ft</option>
+                <option value="40ft" ${item && item.Size === '40ft' ? 'selected' : ''}>40ft</option>
+                <option value="45ft" ${item && item.Size === '45ft' ? 'selected' : ''}>45ft</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Consignee</label>
+              <input type="text" id="cl_consignee" value="${item ? item.Consignee || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Client</label>
+              <input type="text" id="cl_client" value="${item ? item.Client || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Port</label>
+              <input type="text" id="cl_port" list="portsList" value="${item ? item.Port || '' : ''}" placeholder="Select or type port" required class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="portsList">
+                ${ports.map(p => `<option value="${p}">`).join('')}
+              </datalist>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Destination</label>
+              <input type="text" id="cl_destination" list="destList" value="${item ? item.Destination || '' : ''}" placeholder="Select or type destination" required class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="destList">
+                ${destinations.map(d => `<option value="${d}">`).join('')}
+              </datalist>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-gray-50 p-3 rounded-lg border">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Received Docs On</label>
+              <input type="date" id="cl_recDocs" value="${item ? item.RecDocs || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Sent to Agent On</label>
+              <input type="date" id="cl_sentAgent" value="${item ? item.SentAgent || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">ETA</label>
+              <input type="date" id="cl_eta" value="${item ? item.ETA || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Vessel Offloaded On</label>
+              <input type="date" id="cl_offloaded" value="${item ? item.Offloaded || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 bg-gray-50 p-3 rounded-lg border">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Storage On</label>
+              <input type="date" id="cl_storageDate" value="${item ? item.StorageDate || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Loaded On (Truck)</label>
+              <input type="date" id="cl_loadedDate" value="${item ? item.LoadedDate || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Transporter</label>
+              <input type="text" id="cl_transporter" list="transporterList" value="${item ? item.Transporter || '' : ''}" placeholder="Select or type transporter" class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="transporterList">
+                ${contacts.map(c => `<option value="${c.Name || c.Company || c.ID}">`).join('')}
+              </datalist>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Truck</label>
+              <input type="text" id="cl_truck" list="truckList" value="${item ? item.Truck || '' : ''}" placeholder="Select or type truck plate" class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="truckList">
+                ${trucks.map(t => `<option value="${t.PlateNumber || t.ID}">`).join('')}
+              </datalist>
+            </div>
+          </div>
+
+          <div class="border-t pt-3 space-y-3">
+            <h3 class="font-bold text-gray-700 text-sm">Client Agent & Shipping Lines</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Full Name / Company</label>
+                <input type="text" id="cl_agentName" value="${item ? item.AgentName || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Tel</label>
+                <input type="text" id="cl_agentTel" value="${item ? item.AgentTel || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Email</label>
+                <input type="email" id="cl_agentEmail" value="${item ? item.AgentEmail || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Shipping Line(s)</label>
+              <input type="text" id="cl_shippingLines" value="${item ? item.ShippingLines || '' : ''}" placeholder="e.g. MSC, Maersk, CMA CGM (comma separated)" class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+          </div>
+
+          <div class="border-t pt-3 space-y-3">
+            <h3 class="font-bold text-gray-700 text-sm">Financials & Charge Breakdown Logs</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Clearing ($)</label>
+                <input type="number" step="0.01" id="cl_clearingAmt" value="${item ? item.ClearingAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Transport ($)</label>
+                <input type="number" step="0.01" id="cl_transportAmt" value="${item ? item.TransportAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Storage ($)</label>
+                <input type="number" step="0.01" id="cl_storageAmt" value="${item ? item.StorageAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Rent ($)</label>
+                <input type="number" step="0.01" id="cl_rentAmt" value="${item ? item.RentAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Demurrage ($)</label>
+                <input type="number" step="0.01" id="cl_demurrageAmt" value="${item ? item.DemurrageAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+            </div>
+
+            <div class="space-y-2 bg-gray-50 p-3 rounded-lg border">
+              <label class="text-xs font-bold text-gray-700 block">📝 Charge Notes & Chronological Process Logs</label>
+              <div>
+                <span class="text-xs text-gray-500 block">Storage Charge Log / Description:</span>
+                <textarea id="cl_storageNotes" rows="2" placeholder="Record why storage accrued..." class="border p-2 rounded w-full text-xs outline-none bg-white">${item ? item.StorageNotes || '' : ''}</textarea>
+              </div>
+              <div>
+                <span class="text-xs text-gray-500 block">Warehouse Rent Charge Log / Description:</span>
+                <textarea id="cl_rentNotes" rows="2" placeholder="Record custom warehouse rent details..." class="border p-2 rounded w-full text-xs outline-none bg-white">${item ? item.RentNotes || '' : ''}</textarea>
+              </div>
+              <div>
+                <span class="text-xs text-gray-500 block">Demurrage / Detention Charge Log / Description:</span>
+                <textarea id="cl_demurrageNotes" rows="2" placeholder="Record demurrage/detention timelines..." class="border p-2 rounded w-full text-xs outline-none bg-white">${item ? item.DemurrageNotes || '' : ''}</textarea>
+              </div>
+            </div>
+
+            <!-- File Attachment Section -->
+            <div class="border-t pt-3">
+              <label class="text-xs font-bold text-gray-700 block mb-1">📎 Attach Document (BL, Invoice, Receipt, etc.)</label>
+              <div class="flex items-center gap-3">
+                <input type="file" id="hiddenClearingFileInput" onchange="handleFileAttachment(event)" class="hidden">
+                <button type="button" onclick="triggerFileInput()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow transition flex items-center gap-2">
+                  <span>📁 Choose File</span>
+                </button>
+                <span id="attachedFileNameDisplay" class="text-xs text-gray-600 font-medium truncate max-w-[240px]">
+                  ${attachedFileName ? 'Selected: ' + attachedFileName : 'No file chosen'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${item ? 'Update Clearing File' : 'Save Clearing File'}
+          </button>
+        </form>
+      `;
+
+      openFormModal(item ? `Edit Clearing File: ${item.ContainerNo}` : "New Port Clearing File", html);
+    }
+
+    async function submitClearingForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("cl_edit_id").value;
+      const transporterName = document.getElementById("cl_transporter").value.trim();
+
+      if (transporterName) {
+        const db = globalData || {};
+        const contacts = db.Contacts || [];
+        const exists = contacts.some(c => String(c.Name || c.Company).toLowerCase() === transporterName.toLowerCase());
+        if (!exists) {
+          const newContact = {
+            ID: "CON-" + Date.now().toString().slice(-4),
+            Name: transporterName,
+            Category: "Transporter",
+            Phone: document.getElementById("cl_agentTel").value || ""
+          };
+          await sendToServer("Contacts", "add", newContact);
+        }
+      }
+
+      const data = {
+        ID: editId || ("CLR-" + Date.now().toString().slice(-4)),
+        ContainerNo: document.getElementById("cl_container").value,
+        BLno: document.getElementById("cl_bl").value,
+        Size: document.getElementById("cl_size").value,
+        Consignee: document.getElementById("cl_consignee").value,
+        Client: document.getElementById("cl_client").value,
+        Port: document.getElementById("cl_port").value,
+        Destination: document.getElementById("cl_destination").value,
+        RecDocs: document.getElementById("cl_recDocs").value,
+        SentAgent: document.getElementById("cl_sentAgent").value,
+        ETA: document.getElementById("cl_eta").value,
+        Offloaded: document.getElementById("cl_offloaded").value,
+        StorageDate: document.getElementById("cl_storageDate").value,
+        LoadedDate: document.getElementById("cl_loadedDate").value,
+        Transporter: transporterName,
+        Truck: document.getElementById("cl_truck").value,
+        AgentName: document.getElementById("cl_agentName").value,
+        AgentTel: document.getElementById("cl_agentTel").value,
+        AgentEmail: document.getElementById("cl_agentEmail").value,
+        ShippingLines: document.getElementById("cl_shippingLines").value,
+        ClearingAmount: document.getElementById("cl_clearingAmt").value,
+        TransportAmount: document.getElementById("cl_transportAmt").value,
+        StorageAmount: document.getElementById("cl_storageAmt").value,
+        RentAmount: document.getElementById("cl_rentAmt").value,
+        DemurrageAmount: document.getElementById("cl_demurrageAmt").value,
+        StorageNotes: document.getElementById("cl_storageNotes").value,
+        RentNotes: document.getElementById("cl_rentNotes").value,
+        DemurrageNotes: document.getElementById("cl_demurrageNotes").value,
+        AttachmentData: attachedFileBase64,
+        AttachmentName: attachedFileName
+      };
+
+      await sendToServer("Clearing", editId ? "update" : "add", data);
+    }
+
+    function previewClearingDetails(id) {
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(id));
+      if (!item) return alert("Record not found.");
+
+      const total = (parseFloat(item.ClearingAmount) || 0) + 
+                    (parseFloat(item.TransportAmount) || 0) + 
+                    (parseFloat(item.StorageAmount) || 0) + 
+                    (parseFloat(item.RentAmount) || 0) + 
+                    (parseFloat(item.DemurrageAmount) || 0);
+
+      const attachmentSection = item.AttachmentData ? `
+        <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-200 flex justify-between items-center">
+          <span class="text-xs font-bold text-indigo-900">📎 Attached Document: ${item.AttachmentName || 'Document'}</span>
+          <a href="${item.AttachmentData}" download="${item.AttachmentName || 'Clearing_Attachment'}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold shadow transition">Download File</a>
         </div>
-        <button onclick="sessionStorage.clear(); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white p-2 rounded-lg transition font-semibold" title="Sign Out">
-          🚪
-        </button>
-      </div>
-    </aside>
+      ` : `<div class="bg-gray-50 p-2 rounded text-xs text-gray-400 italic">No document attached to this clearing file.</div>`;
 
-    <div id="previewModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
-      <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
-        <button onclick="closeModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
-        <h3 id="modalTitle" class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Record Details</h3>
-        <div id="modalBody" class="space-y-3 text-sm text-gray-700"></div>
-        <div class="mt-6 flex justify-end gap-2">
-          <button onclick="closeModal()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300">Close</button>
+      const modalHtml = `
+        <div id="printableClearingContent" class="space-y-3 text-sm text-gray-700 bg-white p-1">
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Container No:</span><span class="font-bold text-gray-900">📦 ${item.ContainerNo}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">BL No / Size:</span><span class="font-semibold">${item.BLno} (${item.Size})</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Consignee / Client:</span><span class="font-semibold">${item.Consignee} / ${item.Client}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Port & Destination:</span><span class="font-semibold">${item.Port} ➔ ${item.Destination}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Transporter / Truck:</span><span class="font-semibold text-indigo-600">${item.Transporter || 'N/A'} (${item.Truck || 'N/A'})</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Shipping Line(s):</span><span class="font-semibold">${item.ShippingLines || 'N/A'}</span></div>
+          
+          ${attachmentSection}
+
+          <div class="bg-slate-50 p-3 rounded-lg border space-y-1">
+            <p class="font-bold text-xs uppercase text-slate-700">💰 Financial Breakdown</p>
+            <div class="flex justify-between text-xs"><span>Clearing Amount:</span><span class="font-semibold">$${parseFloat(item.ClearingAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Transport Amount:</span><span class="font-semibold">$${parseFloat(item.TransportAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Storage Amount:</span><span class="font-semibold text-red-600">$${parseFloat(item.StorageAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Warehouse Rent:</span><span class="font-semibold text-red-600">$${parseFloat(item.RentAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Demurrage/Detention:</span><span class="font-semibold text-red-600">$${parseFloat(item.DemurrageAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs border-t pt-1 font-bold text-gray-950"><span>Total Expenses:</span><span>$${total.toFixed(2)}</span></div>
+          </div>
+
+          <div class="bg-gray-50 p-3 rounded-lg border space-y-2">
+            <p class="font-bold text-xs uppercase text-gray-700">📝 Charge Logs & Notes</p>
+            <div><span class="font-semibold text-xs text-gray-600">Storage Log:</span> <p class="text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${item.StorageNotes || 'No notes recorded.'}</p></div>
+            <div><span class="font-semibold text-xs text-gray-600">Warehouse Rent Log:</span> <p class="text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${item.RentNotes || 'No notes recorded.'}</p></div>
+            <div><span class="font-semibold text-xs text-gray-600">Demurrage / Detention Log:</span> <p class="text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${item.DemurrageNotes || 'No notes recorded.'}</p></div>
+          </div>
         </div>
-      </div>
-    </div>
+      `;
 
-    <div id="formModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
-      <div class="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
-        <button onclick="closeFormModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
-        <h3 id="formModalTitle" class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Add New Record</h3>
-        <div id="formModalBody"></div>
-      </div>
-    </div>
-  `;
-}
+      document.getElementById("modalTitle").innerHTML = `
+        <div class="flex justify-between items-center w-full">
+          <span>Clearing File: ${item.ContainerNo}</span>
+          <button onclick="printClearingModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+            🖨️ Print / Download PDF
+          </button>
+        </div>
+      `;
+      document.getElementById("modalBody").innerHTML = modalHtml;
+      document.getElementById("previewModal").classList.remove("hidden");
+    }
 
-function openFormModal(title, htmlContent) {
-  document.getElementById("formModalTitle").innerText = title;
-  document.getElementById("formModalBody").innerHTML = htmlContent;
-  document.getElementById("formModal").classList.remove("hidden");
-}
+    function printClearingModal() {
+      const printContents = document.getElementById("printableClearingContent").innerHTML;
+      const originalContents = document.body.innerHTML;
 
-function closeFormModal() {
-  document.getElementById("formModal").classList.add("hidden");
-}
+      document.body.innerHTML = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: auto;">
+          <h2 style="text-align: center; color: #1e3a8a; margin-bottom: 5px;">FLEETDESK - PORT CLEARING REPORT</h2>
+          <p style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 20px;">Generated on: ${new Date().toLocaleString()}</p>
+          <hr style="border: 0; border-top: 1px solid #e5e7eb; margin-bottom: 20px;" />
+          ${printContents}
+        </div>
+      `;
 
-function renderColumnVisibilityMenu(tableId, headers) {
-  return `
-    <div class="relative inline-block text-left">
-      <button onclick="toggleColDropdown('${tableId}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm border flex items-center gap-1 font-medium">
-        👁️ Columns
-      </button>
-      <div id="menu_${tableId}" class="hidden absolute right-0 mt-2 w-52 bg-white border border-gray-200 rounded-lg shadow-xl p-3 z-30 text-xs space-y-2">
-        <p class="font-semibold text-gray-500 border-b pb-1">Toggle Columns</p>
-        ${headers.map((h, idx) => `
-          <label class="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded">
-            <input type="checkbox" checked onchange="toggleTableColumn('${tableId}',${idx}, this.checked)" class="rounded">
-            <span class="text-gray-700">${h}</span>
-          </label>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
+      window.print();
+      document.body.innerHTML = originalContents;
+      window.location.reload();
+    }
 
-function toggleColDropdown(tableId) {
-  const menu = document.getElementById(`menu_${tableId}`);
-  menu.classList.toggle('hidden');
-}
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Clearing') openClearingFormModal(item);
+    };
 
-function toggleTableColumn(tableId, colIndex, isVisible) {
-  const table = document.getElementById(tableId);
-  if (!table) return;
-  const rows = table.rows;
-  for (let i = 0; i < rows.length; i++) {
-    const cell = rows[i].cells[colIndex];
-    if (cell) cell.style.display = isVisible ? '' : 'none';
-  }
-}
-
-function renderActionCell(sheetName, id) {
-  return `
-    <div class="inline-block relative text-left">
-      <button onclick="toggleActionDropdown('${id}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border">
-        Actions ▼
-      </button>
-      <!-- Added flex flex-col here so items stack vertically -->
-      <div id="actionMenu_${id}" class="hidden absolute right-0 mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-xl z-20 py-1 text-left text-xs flex flex-col space-y-0.5">
-        <button onclick="editRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>
-        <button onclick="previewRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>
-        <button onclick="downloadReceipt('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download</button>
-        <button onclick="archiveRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>
-        <button onclick="deleteRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>
-      </div>
-    </div>
-  `;
-}
-
-function toggleActionDropdown(id) {
-  document.querySelectorAll("[id^='actionMenu_']").forEach(menu => {
-    if (menu.id !== `actionMenu_${id}`) menu.classList.add('hidden');
-  });
-  const menu = document.getElementById(`actionMenu_${id}`);
-  if (menu) menu.classList.toggle('hidden');
-}
-
-window.addEventListener('click', function(e) {
-  if (!e.target.closest("button[onclick^='toggleActionDropdown']")) {
-    document.querySelectorAll("[id^='actionMenu_']").forEach(menu => menu.classList.add('hidden'));
-  }
-});
-
-function previewRecord(sheetName, id) {
-  const item = (globalData[sheetName] || []).find(row => String(row.ID) === String(id));
-  if (!item) return alert("Record not found.");
-
-  document.getElementById("modalTitle").innerText = `${sheetName} - Preview [${id}]`;
-  const body = document.getElementById("modalBody");
-  body.innerHTML = Object.keys(item).map(key => `
-    <div class="flex justify-between border-b pb-1">
-      <span class="font-medium text-gray-500">${key}:</span>
-      <span class="font-semibold text-gray-800">${item[key] || 'N/A'}</span>
-    </div>
-  `).join('');
-  document.getElementById("previewModal").classList.remove("hidden");
-}
-
-function closeModal() {
-  document.getElementById("previewModal").classList.add("hidden");
-}
-
-function editRecord(sheetName, id) {
-  const item = (globalData[sheetName] || []).find(row => String(row.ID) === String(id));
-  if (!item) return alert("Record not found.");
-  if (typeof window.onEditTriggered === "function") {
-    window.onEditTriggered(sheetName, item);
-  } else {
-    alert(`Edit triggered for ID [${id}].`);
-  }
-}
-
-function downloadReceipt(sheetName, id) {
-  const item = (globalData[sheetName] || []).find(i => String(i.ID) === String(id));
-  if (!item) return alert("Record not found.");
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.text(`FLEETDESK - ${sheetName.toUpperCase()} RECEIPT`, 105, 20, { align: "center" });
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 28, { align: "center" });
-  doc.line(20, 35, 190, 35);
-
-  let y = 48;
-  Object.keys(item).forEach(key => {
-    doc.setFont("helvetica", "bold");
-    doc.text(`${key}:`, 20, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(`${item[key] || ''}`, 70, y);
-    y += 10;
-  });
-
-  doc.line(20, y + 5, 190, y + 5);
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "italic");
-  doc.text("Thank you for using FleetDesk System!", 105, y + 15, { align: "center" });
-  doc.save(`Receipt_${sheetName}_${id}.pdf`);
-}
-
-async function deleteRecord(sheetName, id) {
-  if (!confirm(`⚠️ WARNING: Permanently delete record [${id}]?`)) return;
-  await sendToServer(sheetName, "delete", { id: id });
-}
-
-async function archiveRecord(sheetName, id) {
-  await sendToServer(sheetName, "archive", { id: id });
-}
-
-function filterTable(e, tableId) {
-  const query = e.target.value.toLowerCase();
-  const table = document.getElementById(tableId);
-  if (!table) return;
-  const trs = table.getElementsByTagName("tr");
-  for (let i = 1; i < trs.length; i++) {
-    const text = trs[i].innerText.toLowerCase();
-    trs[i].style.display = text.includes(query) ? "" : "none";
-  }
-}
-
-function exportCSVData(sheetName, list) {
-  if (!list || list.length === 0) return alert("No data to export.");
-  const headers = Object.keys(list[0]);
-  let csv = headers.join(",") + "\n";
-  list.forEach(row => {
-    csv += headers.map(h => `"${row[h] || ''}"`).join(",") + "\n";
-  });
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `${sheetName}_export.csv`;
-  link.click();
-}
-
-function exportPDFTable(sheetName, list) {
-  if (!list || list.length === 0) return alert("No data available.");
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.text(`FleetDesk - ${sheetName} Report`, 14, 20);
-  doc.setFontSize(10);
-  doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 28);
-  
-  let y = 40;
-  const headers = Object.keys(list[0]);
-  doc.setFillColor(240, 240, 240);
-  doc.rect(14, y-6, 180, 8, "F");
-  doc.text(headers.join(" | "), 14, y);
-  y += 10;
-  
-  doc.setFont("helvetica", "normal");
-  list.forEach(item => {
-    if (y > 280) { doc.addPage(); y = 20; }
-    const rowText = headers.map(h => String(item[h] || '')).join(" | ");
-    doc.text(rowText.substring(0, 95), 14, y);
-    y += 8;
-  });
-  doc.save(`${sheetName}_Report.pdf`);
-}
-
-function showNotification(message, type = "success") {
-  const existingToast = document.getElementById("fleetToast");
-  if (existingToast) existingToast.remove();
-
-  const toast = document.createElement("div");
-  toast.id = "fleetToast";
-  toast.className = `fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold text-white transition-all transform duration-300 translate-y-[-20px] opacity-0 ${
-    type === "success" ? "bg-emerald-600" : "bg-red-600"
-  }`;
-  toast.innerHTML = `✨ ${message}`;
-  document.body.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.remove("translate-y-[-20px]", "opacity-0");
-    toast.classList.add("translate-y-0", "opacity-100");
-  }, 10);
-
-  setTimeout(() => {
-    toast.classList.remove("translate-y-0", "opacity-100");
-    toast.classList.add("translate-y-[-20px]", "opacity-0");
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-}
-
-(function enforceAuth() {
-  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
-  const path = window.location.pathname;
-  const isLoginPage = path.includes("login.html") || window.location.href.includes("login.html");
-
-  if (!currentUser && !isLoginPage) {
-    window.location.href = "login.html";
-  }
-})();
-
-function checkAuth() {
-  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
-  return currentUser ? JSON.parse(currentUser) : null;
-}
-
-function renderUserHeaderBadge() {
-  const user = checkAuth();
-  if (!user) return "";
-  return `
-    <div class="hidden md:flex items-center gap-2 bg-gray-50 border px-3 py-1.5 rounded-full shadow-sm text-xs">
-      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-      <span class="font-bold text-gray-800">${user.Name || user.Username}</span>
-      <span class="text-gray-400">|</span>
-      <span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-semibold">${user.Category || 'Administrator'}</span>
-    </div>
-  `;
-}
-
-function hasPermission(moduleName) {
-  const user = checkAuth();
-  if (!user) return false;
-  if (user.Username === "admin" || user.IsMasterAdmin) return true;
-  const permissions = user.Permissions || [];
-  return permissions.includes(moduleName) || permissions.includes("All");
-}
+    fetchDatabase();
+  </script>
+</body>
+</html>
