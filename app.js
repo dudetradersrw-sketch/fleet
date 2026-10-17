@@ -138,9 +138,38 @@ async function sendToServer(sheetName, action, data) {
   }
 }
 
+// Toggle Sidebar state and persist user preference in localStorage
+function toggleSidebar() {
+  const sidebar = document.getElementById("fleetSidebar");
+  const toggleIcon = document.getElementById("sidebarToggleIcon");
+  if (!sidebar) return;
+
+  const isCollapsed = sidebar.classList.toggle("w-16");
+  sidebar.classList.toggle("w-64");
+
+  // Toggle label visibility
+  document.querySelectorAll(".sidebar-label").forEach(el => {
+    el.classList.toggle("hidden", isCollapsed);
+  });
+
+  // Toggle brand title
+  const brandText = document.getElementById("brandText");
+  if (brandText) brandText.classList.toggle("hidden", isCollapsed);
+
+  // Toggle user badge labels
+  const userDetails = document.getElementById("sidebarUserDetails");
+  if (userDetails) userDetails.classList.toggle("hidden", isCollapsed);
+
+  // Update toggle arrow icon
+  if (toggleIcon) toggleIcon.innerText = isCollapsed ? "▶" : "◀";
+
+  localStorage.setItem("fleetDesk_sidebarCollapsed", isCollapsed ? "true" : "false");
+}
+
 function renderSidebar(activePage) {
   const currentUser = JSON.parse(sessionStorage.getItem("fleetDesk_currentUser") || "{}");
   const isAdmin = currentUser.Username === "admin" || currentUser.IsMasterAdmin;
+  const isCollapsed = localStorage.getItem("fleetDesk_sidebarCollapsed") === "true";
 
   const allPages = [
     { name: "Dashboard", file: "index.html", icon: "📊" },
@@ -165,28 +194,34 @@ function renderSidebar(activePage) {
   }
 
   return `
-    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between hidden md:flex h-screen sticky top-0">
+    <aside id="fleetSidebar" class="${isCollapsed ? 'w-16' : 'w-64'} bg-slate-900 text-slate-300 flex flex-col justify-between hidden md:flex h-screen sticky top-0 transition-all duration-300 z-30">
       <div>
-        <div class="p-5 text-xl font-bold text-white flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            🚚 <span>FleetDesk</span>
+        <div class="p-4 text-xl font-bold text-white flex items-center justify-between border-b border-slate-800">
+          <div class="flex items-center gap-2 overflow-hidden">
+            <span>🚚</span> <span id="brandText" class="${isCollapsed ? 'hidden' : ''} whitespace-nowrap">FleetDesk</span>
           </div>
+          <button onclick="toggleSidebar()" title="Toggle Sidebar" class="text-slate-400 hover:text-white bg-slate-800 p-1.5 rounded-lg text-xs transition">
+            <span id="sidebarToggleIcon">${isCollapsed ? '▶' : '◀'}</span>
+          </button>
         </div>
         <nav class="mt-2 px-2 space-y-1 text-sm overflow-y-auto max-h-[calc(100vh-140px)]">
           ${pages.map(p => `
-            <a href="${p.file}" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 ${activePage === p.name ? 'bg-slate-800 text-white font-semibold' : ''}">
-              <span>${p.icon}</span>${p.name}
+            <a href="${p.file}" title="${p.name}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-800 ${activePage === p.name ? 'bg-slate-800 text-white font-semibold' : ''}">
+              <span class="text-base">${p.icon}</span>
+              <span class="sidebar-label ${isCollapsed ? 'hidden' : ''} whitespace-nowrap">${p.name}</span>
             </a>
           `).join('')}
         </nav>
       </div>
       
-      <div class="p-4 border-t border-slate-800 flex items-center justify-between text-xs">
-        <div>
-          <p class="font-bold text-white">${currentUser.Name || currentUser.Username || 'User'}</p>
-          <p class="text-slate-400">${currentUser.Category || 'User'}</p>
+      <div class="p-3 border-t border-slate-800 flex items-center justify-between text-xs overflow-hidden">
+        <div id="sidebarUserDetails" class="${isCollapsed ? 'hidden' : ''} whitespace-nowrap">
+          <p class="font-bold text-white truncate max-w-[110px]">${currentUser.Name || currentUser.Username || 'User'}</p>
+          <p class="text-slate-400 truncate max-w-[110px]">${currentUser.Category || 'User'}</p>
         </div>
-        <button onclick="sessionStorage.clear(); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white px-2 py-1 rounded-lg transition font-semibold" title="Sign Out">Logout</button>
+        <button onclick="sessionStorage.clear(); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white p-2 rounded-lg transition font-semibold" title="Sign Out">
+          🚪
+        </button>
       </div>
     </aside>
 
